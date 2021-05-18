@@ -56,30 +56,37 @@ __global__ void vectorDot(T* v1, T* v2, T* vr, unsigned int size) {
         //if there needs to be more add reduce, then add reduce kernel can just be called on the result
     //for my implementation I will launch 256 threads per block 
     __shared__ T result[256];
-
+    //final result to copy back into global memory in this blocks index at the end
+    T finalResult=0;
     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
     for (unsigned int i = tid; i < size; i += blockDim.x * gridDim.x) {
         //multiplying both components and placing them in the appropriate spot in the result vector
             //adding to result component does not matter because we are adding a bunch of results anyway
         result[threadIdx.x] += (v1[tid] * v2[tid]);
-    }
-    __syncthreads();
-    //performing add reduce on shared memory and having a single thread write the result back to the results vector
-        //may need to run further add reduce on the result
-    for (unsigned int s = blockDim.x / 2;s > 0;s >>= 1) {
-        if (tid < s) {
-            //doing reduction with a neighbor halfway across the block
-            result[tid] += result[tid + s];
-        }
-        //making sure threads are synced up within a block at the same reduce step
+
+        //syncing the results in this batch
         __syncthreads();
+        //performing add reduce on shared memory (so only threadid matters here)
+        for (unsigned int s = blockDim.x / 2;s > 0;s >>= 1) {
+            if (threadIdx.x < s) {
+                result[threadIdx.x] += result[threadIdx.x + s];
+            }
+            //making sure every thread in this level of reduction has finished adding
+            __syncthreads();
+        }
+        if (threadIdx.x == 0) {
+            //updating the finalresult value
+            finalResult += result[0];
+        }
+        //need syncthreads here to make sure no threads change the result value before finalResult can be updated
+        __syncthreads();
+        
     }
 
-    //storing result for each block into global memory
+    //copying into global memory
     if (threadIdx.x == 0) {
-        vr[blockIdx.x] = result[0];
+        vr[blockIdx.x] = finalResult;
     }
-
     //may need to add reduce again if the number of threads in a block is less than the number of components in the vector
 }
 
@@ -171,6 +178,17 @@ int main()
     cudaMalloc(&secondDeviceVector, sizeof(int) * 10);
     cudaMalloc(&resultAllocation, sizeof(int) * 10);
 
+    //copying host memory to device
+    cudaMemcpy(firstDeviceVector, firstHostVector, sizeof(int) * 10, cudaMemcpyHostToDevice);
+    cudaMemcpy(secondDeviceVector, secondHostVector, sizeof(int) * 10, cudaMemcpyHostToDevice);
+
+    //running kernel
+    vectorDot << <1, 256 >> > (firstDeviceVector, secondDeviceVector, resultAllocation, 10);
+
+    //copying result allocation to buffer to print
+    int result;
+    cudaMemcpy(&result, resultAllocation, sizeof(int), cudaMemcpyDeviceToHost);
+    printf("RESULT %d\n", result);
     return 0;
 }
 

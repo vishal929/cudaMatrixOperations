@@ -1,48 +1,8 @@
-﻿
-#include "cuda_runtime.h"
+﻿#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-template <class T>
-
-//scaling with generic type for matrices
-__global__ void scaleMatrix(T* M, unsigned int maxDim,T scalar) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = tid;i < maxDim;i += blockDim.x * gridDim.x) {
-        M[i] = scalar * M[i];
-    }
-}
-
-//adding two matrices together
-    //we are assuming here that proper checking has been done to ensure that M1 and M2 have the same size and so does the result matrix
-template <class T>
-__global__ void addMatrices(T* M1, T* M2, T* R, unsigned int maxDim) {
-   int tid = blockIdx.x * blockDim.x + threadIdx.x;
-   for (int i = tid;i < maxDim;i += blockDim.x * gridDim.x) {
-       R[i] = M1[i] + M2[i];
-   } 
-}
-
-//getting the transpose of a matrix, and storing result in another matrix 
-    //M is the input, R is the result matrix with the same size (dimensions could be different, but R will have same # of entries)
-template <class T>
-__global__ void matrixTranspose(T* M, T* R, unsigned int rows, unsigned int cols) {
-    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (unsigned int i = tid; i<rows*cols; i += blockDim.x * gridDim.x) {
-        //need to put this entry in the right place in the result 
-            //we have originally M[i] = M[rowIndex*(number columns) + colIndex]
-            // in the transpose, rows becomes columns and vice versa
-            // so our new place is M[colIndex(number rows) + rowindex]
-                //to get rowindex from i, we just divide i by the number of columns and round down
-        unsigned int convertedRow = (i % cols)*rows;
-        unsigned int col = i / cols;
-        R[convertedRow + col] = M[tid];
-
-    }
-    //result should be ok now for the transpose
-}
-
 
 //dot product between 2  vectors
     //v1 and v2 are input vectors of the same size
@@ -97,6 +57,47 @@ template <class T>
 __global__ void vectorCross(T* v1, T* v2, T* vr, unsigned int size) {
     
 }
+
+//scaling with generic type for matrices
+template <class T>
+__global__ void scaleMatrix(T* M, unsigned int maxDim,T scalar) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int i = tid;i < maxDim;i += blockDim.x * gridDim.x) {
+        M[i] = scalar * M[i];
+    }
+}
+
+//adding two matrices together
+    //we are assuming here that proper checking has been done to ensure that M1 and M2 have the same size and so does the result matrix
+template <class T>
+__global__ void addMatrices(T* M1, T* M2, T* R, unsigned int maxDim) {
+   int tid = blockIdx.x * blockDim.x + threadIdx.x;
+   for (int i = tid;i < maxDim;i += blockDim.x * gridDim.x) {
+       R[i] = M1[i] + M2[i];
+   } 
+}
+
+//getting the transpose of a matrix, and storing result in another matrix 
+    //M is the input, R is the result matrix with the same size (dimensions could be different, but R will have same # of entries)
+template <class T>
+__global__ void matrixTranspose(T* M, T* R, unsigned int rows, unsigned int cols) {
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (unsigned int i = tid; i<rows*cols; i += blockDim.x * gridDim.x) {
+        //need to put this entry in the right place in the result 
+            //we have originally M[i] = M[rowIndex*(number columns) + colIndex]
+            // in the transpose, rows becomes columns and vice versa
+            // so our new place is M[colIndex(number rows) + rowindex]
+                //to get rowindex from i, we just divide i by the number of columns and round down
+        unsigned int convertedRow = (i % cols)*rows;
+        unsigned int col = i / cols;
+        R[convertedRow + col] = M[tid];
+
+    }
+    //result should be ok now for the transpose
+}
+
+
+
 
 
 
@@ -162,6 +163,7 @@ int main()
     }*/
 
     /*Vector Dot Product Test*/
+    /*
     int firstHostVector[10];
     int secondHostVector[10];
     for (int i = 0;i < 10;i++) {
@@ -188,7 +190,30 @@ int main()
     //copying result allocation to buffer to print
     int result;
     cudaMemcpy(&result, resultAllocation, sizeof(int), cudaMemcpyDeviceToHost);
-    printf("RESULT %d\n", result);
+    printf("RESULT %d\n", result); */
+
+    /*Matrix Transpose Test*/
+    //we will suppose that hostMatrix is 5x20 matrix, so the transpose should be 20x5
+    int hostMatrix[100];
+    for (int i = 0;i < 100;i++) {
+        hostMatrix[i] = i;
+    }
+    int* cudaMatrix;
+    int* cudaResultMatrix;
+    cudaMalloc(&cudaMatrix, sizeof(int) * 100);
+    cudaMalloc(&cudaResultMatrix, sizeof(int) * 100);
+    cudaMemcpy(cudaMatrix, hostMatrix, sizeof(int) * 100, cudaMemcpyHostToDevice);
+    //calling kernel
+    matrixTranspose << <1, 256 >> > (cudaMatrix, cudaResultMatrix, 5, 20);
+    //copying result to host allocation and printing
+    cudaMemcpy(hostMatrix, cudaResultMatrix, sizeof(int) * 100, cudaMemcpyDeviceToHost);
+    //printing result
+    for (int i = 0;i < 20;i++) {
+        for (int j = 0;j < 5;j++) {
+            printf("%d, ", hostMatrix[i * 5 + j]);
+        }
+        printf("\n");
+    }
     return 0;
 }
 

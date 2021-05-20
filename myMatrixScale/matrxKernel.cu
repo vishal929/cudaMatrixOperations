@@ -1,8 +1,10 @@
 ﻿#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "device_atomic_functions.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+
 
 //dot product between 2  vectors
     //v1 and v2 are input vectors of the same size
@@ -23,6 +25,7 @@ __global__ void vectorDot(T* v1, T* v2, T* vr, unsigned int size) {
         //multiplying both components and placing them in the appropriate spot in the result vector
             //adding to result component does not matter because we are adding a bunch of results anyway
         result[threadIdx.x] += (v1[tid] * v2[tid]);
+        //finalResult += (v1[tid] * v2[tid]);
 
         //syncing the results in this batch
         __syncthreads();
@@ -43,9 +46,10 @@ __global__ void vectorDot(T* v1, T* v2, T* vr, unsigned int size) {
         
     }
 
-    //copying into global memory
+    //copying into global memory with atomic add
     if (threadIdx.x == 0) {
-        vr[blockIdx.x] = finalResult;
+        atomicAdd(vr, &finalResult);
+        //vr[blockIdx.x] = finalResult;
     }
     //may need to add reduce again if the number of threads in a block is less than the number of components in the vector
 }
@@ -94,6 +98,70 @@ __global__ void matrixTranspose(T* M, T* R, unsigned int rows, unsigned int cols
 
     }
     //result should be ok now for the transpose
+}
+
+//matrix multiplication between 2 matrices M1 and M2; result is stored in R
+    //row1 and col1 are dimensions of M1, row2 and col2 are dimensions of M2
+    //recall that a pxq matrix multiplied by qxm will have result pxm
+        //so result should have size row1 x col2
+    //allocation of the result is assumed to then be correct by the user 
+//DISCLAIMER: my idea here is that each block of threads handles a vector dot product
+            //a lot of solutions I saw use 1 thread to handle each dot product, but I would like to exploit as much parallelism as possible
+                   //As a result, I want one block of threads to handle each individual dot product
+            //I will try and compare both solutions in terms of throughput on large matrices
+template<class T>
+__global__ void matrixMultiply(T* M1, T* M2, T* R, unsigned int row1, unsigned int col1, unsigned int row2, unsigned int col2) {
+    //need to reduce shared memory in place and then update the corresponding global value in R
+    //we will launch the kernel with 256 threads per block
+        //I will launch as many blocks as components in the result vector to fully exploit parallelism
+    __shared__ T s[256];
+    __shared__ T s2[256];
+    //finalSum for this thread to change
+    T finalSum = 0;
+
+    
+    //each block of threads handles calculation of 1 entry in the output  
+        //this is opposed to a lot of implementations where a single thread handles calculation of 1 entry in the output
+        //hopefully this means really fast computation times, we will see
+    
+    /*IDEA BELOW TO HAVE BLOCKS HANDLE INDIVIDUAL DOT PRODUCTS TO EXPLOIT MAXIMUM PARALLELISM*/
+    
+    for (int i = blockIdx.x;i != row1;i += gridDim.x) {
+        for (int j = blockIdx.y * gridIdx.y;j != col2;j += gridDim.y) {
+            //doing vector dot for this particular block
+            int tid = gridIdx.x * blockIdx.x + threadIdx.x;
+            for (int z = threadIdx.x;z != col1;z += blockDim.x) {
+                s[threadIdx.x] = M1[(i*col1)+z] * M2[(z*col2)+j];
+
+                __syncthreads();
+
+                //doing parallel add reduce for the vector sum
+                for (unsigned int s = blockDim.x / 2;s > 0;s >>= 1) {
+					if (threadIdx.x < s) {
+						result[threadIdx.x] += result[threadIdx.x + s];
+					}
+					//making sure every thread in this level of reduction has finished adding
+					__syncthreads();
+			    }
+
+                //now the first entry has the total sum
+                if (threadIdx.x == 0) {
+					//updating the finalresult value
+					finalResult += result[0];
+                }
+                //need syncthreads here to make sure no threads change the result value before finalResult can be updated
+                __syncthreads();
+            }
+            //now we can update the global value of the matrix entry
+            if (threadIdx.x == 0) {
+                R[(i * col2) + j] = finalResult;
+                finalResult = 0;
+            }
+            //making sure finalResult isnt modified by some other thread in the block before it can be updated to global memory
+            __syncthreads();
+        }
+    }
+    
 }
 
 
@@ -193,6 +261,7 @@ int main()
     printf("RESULT %d\n", result); */
 
     /*Matrix Transpose Test*/
+    /*
     //we will suppose that hostMatrix is 5x20 matrix, so the transpose should be 20x5
     int hostMatrix[100];
     for (int i = 0;i < 100;i++) {
@@ -213,7 +282,7 @@ int main()
             printf("%d, ", hostMatrix[i * 5 + j]);
         }
         printf("\n");
-    }
+    }*/
     return 0;
 }
 

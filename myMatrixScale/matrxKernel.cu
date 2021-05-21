@@ -114,24 +114,31 @@ __global__ void matrixMultiply(T* M1, T* M2, T* R, unsigned int row1, unsigned i
     //need to reduce shared memory in place and then update the corresponding global value in R
     //we will launch the kernel with 256 threads per block
         //I will launch as many blocks as components in the result vector to fully exploit parallelism
-    __shared__ T s[256];
-    __shared__ T s2[256];
-    //finalSum for this thread to change
-    T finalSum = 0;
+    __shared__ T result[256];
+    //finalSum for thread 0 in the block to update 
+    T finalResult = 0;
 
     
     //each block of threads handles calculation of 1 entry in the output  
         //this is opposed to a lot of implementations where a single thread handles calculation of 1 entry in the output
         //hopefully this means really fast computation times, we will see
-    
+        //so the structure is that our grid contains a 2d array of blocks
+            //each block has a 1D array of threads
+     
     /*IDEA BELOW TO HAVE BLOCKS HANDLE INDIVIDUAL DOT PRODUCTS TO EXPLOIT MAXIMUM PARALLELISM*/
     
-    for (int i = blockIdx.x;i != row1;i += gridDim.x) {
-        for (int j = blockIdx.y * gridIdx.y;j != col2;j += gridDim.y) {
+    for (int i = blockIdx.x;i < row1;i += gridDim.x) {
+        for (int j = blockIdx.y;j < col2;j += gridDim.y) {
             //doing vector dot for this particular block
-            int tid = gridIdx.x * blockIdx.x + threadIdx.x;
-            for (int z = threadIdx.x;z != col1;z += blockDim.x) {
-                s[threadIdx.x] = M1[(i*col1)+z] * M2[(z*col2)+j];
+            //int tid = gridIdx.x * blockIdx.x + threadIdx.x;
+            
+            for (int z = threadIdx.x;z< col1;z += blockDim.x) {
+                result[threadIdx.x] = M1[(i*col1)+z] * M2[(z*col2)+j];
+                if (i == 0 && j==0) {
+               //debugging for the first entry 
+                printf("thread: %d has computed value %d!\n", threadIdx.x,result[threadIdx.x]);
+
+                }
 
                 __syncthreads();
 
@@ -283,6 +290,47 @@ int main()
         }
         printf("\n");
     }*/
+
+    /*TESTING MULTIPLICATION OF MATRICES*/
+    //two 10x10 matrices
+    int firstMatrix[100];
+    int secondMatrix[100];
+    for (int i = 0;i < 100;i++) {
+        firstMatrix[i] = i;
+        secondMatrix[i] = i;
+    }
+
+    //cuda copying
+    int* firstMatrixDevice;
+    int* secondMatrixDevice;
+    int* resultMatrix;
+    cudaMalloc(&firstMatrixDevice, sizeof(int) * 100);
+    cudaMalloc(&secondMatrixDevice, sizeof(int) * 100);
+    cudaMalloc(&resultMatrix, sizeof(int) * 100);
+
+    //copying
+    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 100, cudaMemcpyHostToDevice);
+    cudaMemcpy(secondMatrixDevice, secondMatrix, sizeof(int) * 100, cudaMemcpyHostToDevice); 
+
+    //getting 2D grid of blocks, which are 1D arrays of threads
+        //block for each output
+    dim3 gridDim = dim3(10, 10);
+        //1D array threads for iteration
+    dim3 blockDim = dim3(256, 1);
+
+    //calling the kernel
+    matrixMultiply << <gridDim, blockDim >> > (firstMatrixDevice, secondMatrixDevice, resultMatrix, 10, 10, 10, 10);
+    
+    //copying results to printable array
+    cudaMemcpy(firstMatrix, resultMatrix, sizeof(int) * 100, cudaMemcpyDeviceToHost);
+
+    for (int i = 0;i < 10;i++) {
+        for (int j = 0;j < 10;j++) {
+            printf("%d, ", firstMatrix[(i * 10) + j]);
+        }
+        printf("\n");
+    }
+
     return 0;
 }
 

@@ -292,11 +292,14 @@ int main()
     }*/
 
     /*TESTING MULTIPLICATION OF MATRICES*/
-    //two 10x10 matrices
-    int firstMatrix[100];
-    int secondMatrix[100];
-    for (int i = 0;i < 100;i++) {
-        firstMatrix[i] = i;
+    //5 x 5 and 5x6
+    //3x3 and 3x4
+    int firstMatrix[25];
+    int secondMatrix[30];
+    for (int i = 0;i < 30;i++) {
+        if (i < 25) { 
+            firstMatrix[i] = i;
+        }
         secondMatrix[i] = i;
     }
 
@@ -304,29 +307,30 @@ int main()
     int* firstMatrixDevice;
     int* secondMatrixDevice;
     int* resultMatrix;
-    cudaMalloc(&firstMatrixDevice, sizeof(int) * 100);
-    cudaMalloc(&secondMatrixDevice, sizeof(int) * 100);
-    cudaMalloc(&resultMatrix, sizeof(int) * 100);
+    cudaMalloc(&firstMatrixDevice, sizeof(int) * 25);
+    cudaMalloc(&secondMatrixDevice, sizeof(int) * 30);
+    cudaMalloc(&resultMatrix, sizeof(int) * 30);
 
     //copying
-    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 100, cudaMemcpyHostToDevice);
-    cudaMemcpy(secondMatrixDevice, secondMatrix, sizeof(int) * 100, cudaMemcpyHostToDevice); 
+    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 25, cudaMemcpyHostToDevice);
+    cudaMemcpy(secondMatrixDevice, secondMatrix, sizeof(int) * 30, cudaMemcpyHostToDevice); 
 
     //getting 2D grid of blocks, which are 1D arrays of threads
         //block for each output
-    dim3 gridDim = dim3(10, 10);
+    dim3 gridDim = dim3(5, 6);
         //1D array threads for iteration
     dim3 blockDim = dim3(256, 1);
 
     //calling the kernel
-    matrixMultiply << <gridDim, blockDim >> > (firstMatrixDevice, secondMatrixDevice, resultMatrix, 10, 10, 10, 10);
+    matrixMultiply << <gridDim, blockDim >> > (firstMatrixDevice, secondMatrixDevice, resultMatrix, 5, 5, 5, 6);
     
     //copying results to printable array
-    cudaMemcpy(firstMatrix, resultMatrix, sizeof(int) * 100, cudaMemcpyDeviceToHost);
+    int hostResult[30];
+    cudaMemcpy(hostResult, resultMatrix, sizeof(int) * 30, cudaMemcpyDeviceToHost);
 
-    for (int i = 0;i < 10;i++) {
-        for (int j = 0;j < 10;j++) {
-            printf("%d, ", firstMatrix[(i * 10) + j]);
+    for (int i = 0;i < 5;i++) {
+        for (int j = 0;j < 6;j++) {
+            printf("%d, ", hostResult[(i * 6) + j]);
         }
         printf("\n");
     }

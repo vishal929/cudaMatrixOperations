@@ -55,13 +55,6 @@ __global__ void vectorDot(T* v1, T* v2, T* vr, unsigned int size) {
 }
 
 
-//getting the cross product of 2 vectors, v1 and v2, and storing the result in vr
-    //idea is simply to apply determinant to however many components we have, like in the 3D case
-template <class T>
-__global__ void vectorCross(T* v1, T* v2, T* vr, unsigned int size) {
-    
-}
-
 //scaling with generic type for matrices
 template <class T>
 __global__ void scaleMatrix(T* M, unsigned int maxDim,T scalar) {
@@ -134,11 +127,7 @@ __global__ void matrixMultiply(T* M1, T* M2, T* R, unsigned int row1, unsigned i
             
             for (int z = threadIdx.x;z< col1;z += blockDim.x) {
                 result[threadIdx.x] = M1[(i*col1)+z] * M2[(z*col2)+j];
-                if (i == 0 && j==0) {
-               //debugging for the first entry 
-                printf("thread: %d has computed value %d!\n", threadIdx.x,result[threadIdx.x]);
-
-                }
+                
 
                 __syncthreads();
 
@@ -169,6 +158,66 @@ __global__ void matrixMultiply(T* M1, T* M2, T* R, unsigned int row1, unsigned i
         }
     }
     
+}
+
+//parallel reduction of a matrix for partial gauss-jordan elimination
+    //M is the matrix to reduce
+    //rows is the number of rows in M
+    //columns is the number of columns in M
+    //after the kernel is finished, M will represent the matrix transformed under gauss-jordan elimination, but it will not be in triangular form
+        //the cpu will handle organization after this kernel into upper triangular form
+template <class T>
+__global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
+    //we will launch a single block, where threads handle operations between every other row
+        //i.e T1 will reduce row 2, T2 will reduce row 3 and so on from the current index
+    //each thread has a scalar for reducing with respect to other rows
+    double scalar;
+    //each block has a position value (first nonzero element in the position)
+    __shared__ int rowToReduce = -1;
+    //going row by row
+
+    //we have to reduce pivot by pivot
+        //Two ideas here: 
+            //we do 1 reduction at a time: block is assigned to reduction
+            //we do multiple slower reductions at a time: thread is assigned to each reduction
+            //not sure which one is faster/ better for the current application
+    for (int i = 0;i < columns;i++) {
+        //finding a row with the given pivot of i
+        int id = threadIdx.x;
+        for (int j = id;j < rows;j+=blockDim.x) {
+            if (M[(j * columns) + i] != 0) {
+                //then this is a pivot
+                atomicExch(&rowToReduce, j);
+            }
+        }
+
+        if (rowToReduce != -1) {
+            
+            //doing reduction between other rows
+                //do not want to reduce the row we just picked for our pivot
+            for (int j = id;j < rows && j != rowToReduce;j += blockDim.x) {
+                scalar = M[(j * columns) + i] / M[(rowToReduce * columns) + i];
+                for (int z = 0;z < columns;z++) {
+                    M[(j * columns) + z] -= (M[(rowToReduce * columns) + z] * scalar);
+                }
+            }
+        }
+
+        //syncing threads
+        __sync_threads();
+        
+    }
+    
+    //now the matrix should be in reduced form
+        //we can use cpu power to bring the matrix to echelon or reduced echelon form
+       
+}
+
+//PLU factorization on a given matrix M
+    //this will help with solving systems and also very important for our calculation of the determinant (an iterative calculation rather than recursive)
+template <class T>
+__global__ void PLUFactorization(T* M, T* P, T* L, T* U, unsigned int rows, unsigned int columns) {
+
 }
 
 

@@ -290,14 +290,14 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
     //we will do a parallel divide for each pivot to get every row in the form 1,...,...,...
 
     /*THIRD PHASE*/
-    /*
+    
     for (int i = threadIdx.x;i < rows;i += blockDim.x) {
         //now we find the first nonzero element in the row
         for (int j = 0;j < columns;j++) {
             if (M[(i * columns) + j] != 0) {
                 double toScale = M[(i * columns) + j];
                 //then we go through the rest of the row and reduce
-                for (int z = j + 1;z < columns;z++) {
+                for (int z = j ;z < columns;z++) {
                     M[(i * columns) + z] /= toScale;
                 }
                 break;

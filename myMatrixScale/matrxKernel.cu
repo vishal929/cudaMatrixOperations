@@ -179,7 +179,7 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
     
     
     /*FIRST PHASE*/
-
+    
     __shared__ int rowToReduce;
     for (int i = 0;i < columns;i++) {
         if (threadIdx.x == 0) {
@@ -215,18 +215,12 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
                 if (j == rowToReduce) {
                     continue;
                 }
-                double scalar =  M[(j * columns) + i] / M[(rowToReduce * columns) + i];
+                double scalar =  double(M[(j * columns) + i]) / double(M[(rowToReduce * columns) + i]);
                 for (int z = i;z < columns;z++) {
-                    M[(j * columns) + z] -= scalar * M[(rowToReduce * columns) + z];
+                    M[(j * columns) + z] -= (scalar * double(M[(rowToReduce * columns) + z]));
                 }
             }
-            //DEBUG
-            /*
-            for (int z = threadIdx.x;z < columns;z += blockDim.x) {
-
-               printf("ROW TO REDUCE: %d\n", rowToReduce);
-               M[(rowToReduce * columns) + z] = 0;
-            }*/
+            
         }
         __syncthreads();
     }
@@ -239,7 +233,7 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
             //then the final step will be reduced row echelon form
 
     /*SECOND PHASE*/
-    
+   
     
     
 
@@ -298,7 +292,7 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
                 double toScale = M[(i * columns) + j];
                 //then we go through the rest of the row and reduce
                 for (int z = j ;z < columns;z++) {
-                    M[(i * columns) + z] /= toScale;
+                    M[(i * columns) + z] = double(M[(i*columns)+z])/toScale;
                 }
                 break;
             }
@@ -488,28 +482,25 @@ int main()
     }*/
 
     /*TEST FOR REDUCED ECHELON FORM REDUCTION*/
-    int firstMatrix[25];
-    for (int i = 0;i < 25;i++) {
-       firstMatrix[i] = i;
-    }
-
+    
+    int firstMatrix[] ={0, −3, −6, 4, 9, −1, −2, −1, 3, 1, −2, −3, 0, 3, −1, 1, 4, 5, −9, −7};
     //cuda copying
     int* firstMatrixDevice;
-    cudaMalloc(&firstMatrixDevice, sizeof(int) * 25);
+    cudaMalloc(&firstMatrixDevice, sizeof(int) * 20);
 
     //copying
-    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 25, cudaMemcpyHostToDevice);
+    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 20, cudaMemcpyHostToDevice);
 
      
 
     //calling the kernel with a single block and a lot of threads
-    matrixReduction << <1,256 >> > (firstMatrixDevice  , 5, 5 );
+    matrixReduction << <1,256 >> > (firstMatrixDevice  , 4, 5 );
     
     //copying results to printable array
-    int hostResult[25];
-    cudaMemcpy(hostResult, firstMatrixDevice, sizeof(int) * 25, cudaMemcpyDeviceToHost);
+    int hostResult[20];
+    cudaMemcpy(hostResult, firstMatrixDevice, sizeof(int) * 20, cudaMemcpyDeviceToHost);
 
-    for (int i = 0;i < 5;i++) {
+    for (int i = 0;i < 4;i++) {
         for (int j = 0;j < 5;j++) {
             printf("%d, ", hostResult[(i * 5) + j]);
         }

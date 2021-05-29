@@ -179,12 +179,18 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
     
     
     /*FIRST PHASE*/
+
+    __shared__ int rowToReduce;
     for (int i = 0;i < columns;i++) {
-        __shared__ int rowToReduce = -1;
+        if (threadIdx.x == 0) {
+            //printf("NEW ITER!\n");
+            rowToReduce = -1;
+        }
+        __syncthreads();
         //finding the row to reduce with this pivot
         for (int j = threadIdx.x;j < rows;j += blockDim.x) {
             //going through the row and seeing if all entries are zero up to this point, if so, then this is a possible pivot 
-            if (M[(j * columns) + i] != 0) {
+            if (M[(j * columns) + i] == 0) {
                 continue;
             }
             bool satisfied = true;
@@ -196,25 +202,35 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
             }
             if (satisfied) {
                 //then a possible pivot
-                atomicExch(&rowToReduce, j);
+                atomicCAS(&rowToReduce,-1, j);
             }
         }
 
-        __sync_threads();
+        __syncthreads();
         if (rowToReduce != -1) {
+            //printf("ROW TO REDUCE: %d!\n",rowToReduce);
             //then we can proceed with reduction between all other rows
+            
             for (int j = threadIdx.x;j < rows;j+=blockDim.x) {
                 if (j == rowToReduce) {
                     continue;
                 }
-                scalar =  M[(j * columns) + i] / M[(rowToReduce * columns) + i];
+                double scalar =  M[(j * columns) + i] / M[(rowToReduce * columns) + i];
                 for (int z = i;z < columns;z++) {
                     M[(j * columns) + z] -= scalar * M[(rowToReduce * columns) + z];
                 }
             }
+            //DEBUG
+            /*
+            for (int z = threadIdx.x;z < columns;z += blockDim.x) {
+
+               printf("ROW TO REDUCE: %d\n", rowToReduce);
+               M[(rowToReduce * columns) + z] = 0;
+            }*/
         }
-        __sync_threads();
+        __syncthreads();
     }
+    
     /*END OF FIRST PHASE*/
     
     
@@ -223,16 +239,18 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
             //then the final step will be reduced row echelon form
 
     /*SECOND PHASE*/
-
+    /*
     
+    
+
+    //getting the place we swapped
+    __shared__ int place ;
+    __shared__ int position;
     if (threadIdx.x == 0) {
-        scalar = 0;
+        place = -1;
     }
 
-    __sync_threads();
-    //getting the place we swapped
-    __shared__ int place = -1;
-    __shared__ int position = 0;
+    __syncthreads();
     //now swapping rows to get into row echelon form
     for (int i = 0;i < columns;i++) {
         //finding the row with nonzero pivot position
@@ -243,7 +261,7 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
                 place = z;
             }
         }
-        __sync_threads();
+        __syncthreads();
         //now doing the row swap between the current position row and the place row, if the place row is valid (a pivot row was found)
         if (place != -1) {
 			for (int z = threadIdx.x;z < columns;z += blockDim.x) {
@@ -252,26 +270,27 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
 				M[(position * columns) + z] = tmp;
 			}
                
-            __sync_threads();
+            __syncthreads();
 
 			//incrementing the position and resetting the place to swap
             if (threadIdx.x == 0) {
                 position++;
                 place = -1;
             }
-			__sync_threads();
+			__syncthreads();
         }
         
     }
 
-    __sync_threads();
-
+    __syncthreads();
+    
     /*END OF SECOND PHASE */
     //now everything is swapped
      
     //we will do a parallel divide for each pivot to get every row in the form 1,...,...,...
 
     /*THIRD PHASE*/
+    /*
     for (int i = threadIdx.x;i < rows;i += blockDim.x) {
         //now we find the first nonzero element in the row
         for (int j = 0;j < columns;j++) {
@@ -281,11 +300,12 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
                 for (int z = j + 1;z < columns;z++) {
                     M[(i * columns) + z] /= toScale;
                 }
+                break;
             }
         }
     }
 
-    __sync_threads();
+    __syncthreads();
 
     //now we should have row echelon form
     /*END OF THIRD PHASE*/
@@ -468,7 +488,33 @@ int main()
     }*/
 
     /*TEST FOR REDUCED ECHELON FORM REDUCTION*/
+    int firstMatrix[25];
+    for (int i = 0;i < 25;i++) {
+       firstMatrix[i] = i;
+    }
+
+    //cuda copying
+    int* firstMatrixDevice;
+    cudaMalloc(&firstMatrixDevice, sizeof(int) * 25);
+
+    //copying
+    cudaMemcpy(firstMatrixDevice, firstMatrix, sizeof(int) * 25, cudaMemcpyHostToDevice);
+
+     
+
+    //calling the kernel with a single block and a lot of threads
+    matrixReduction << <1,256 >> > (firstMatrixDevice  , 5, 5 );
     
+    //copying results to printable array
+    int hostResult[25];
+    cudaMemcpy(hostResult, firstMatrixDevice, sizeof(int) * 25, cudaMemcpyDeviceToHost);
+
+    for (int i = 0;i < 5;i++) {
+        for (int j = 0;j < 5;j++) {
+            printf("%d, ", hostResult[(i * 5) + j]);
+        }
+        printf("\n");
+    } 
 
     return 0;
 }

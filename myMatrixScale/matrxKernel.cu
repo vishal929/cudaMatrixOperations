@@ -239,7 +239,7 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
             //then the final step will be reduced row echelon form
 
     /*SECOND PHASE*/
-    /*
+    
     
     
 

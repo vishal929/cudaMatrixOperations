@@ -51,7 +51,21 @@ __global__ void vectorDot(T* v1, T* v2, T* vr, unsigned int size) {
         atomicAdd(vr, &finalResult);
         //vr[blockIdx.x] = finalResult;
     }
-    //may need to add reduce again if the number of threads in a block is less than the number of components in the vector
+}
+
+//just fills out an identity matrix
+    //identity is square, so only dimension is needed
+__global__ void generateIdentity(int* I, unsigned int dimension) {
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int dimSquared = dimension * dimension;
+    for (int i = tid;i < dimSquared;i+=blockDim.x) {
+        if (i % (dimension+1) == 0) {
+            I[i] = 1;
+        }
+        else {
+            I[i] = 0;
+        }
+    }
 }
 
 
@@ -306,13 +320,289 @@ __global__ void matrixReduction(T* M, unsigned int rows, unsigned int columns) {
     //now we should have reduced row echelon form !
 }
 
+
+//just doing reduction kernel on the matrix M and applying the same logic to the given Identity matrix I
+    //the given matrix M must be checked to see if determinant is nonzero (invertible). This kernel WILL NOT CHECK FOR THAT!
+template <class T>
+__global__ void matrixInverse(T* M, T* I, unsigned int rows, unsigned int columns) {
+
+    /*FIRST PHASE*/
+    
+    __shared__ int rowToReduce;
+    for (int i = 0;i < columns;i++) {
+        if (threadIdx.x == 0) {
+            //printf("NEW ITER!\n");
+            rowToReduce = -1;
+        }
+        __syncthreads();
+        //finding the row to reduce with this pivot
+        for (int j = threadIdx.x;j < rows;j += blockDim.x) {
+            //going through the row and seeing if all entries are zero up to this point, if so, then this is a possible pivot 
+            if (M[(j * columns) + i] == 0) {
+                continue;
+            }
+            bool satisfied = true;
+            for (int z = 0;z < i;z++) {
+                if (M[(j * columns) + z] != 0) {
+                    satisfied = false;
+                    break;
+                }
+            }
+            if (satisfied) {
+                //then a possible pivot
+                atomicCAS(&rowToReduce,-1, j);
+            }
+        }
+
+        __syncthreads();
+        if (rowToReduce != -1) {
+            //printf("ROW TO REDUCE: %d!\n",rowToReduce);
+            //then we can proceed with reduction between all other rows
+            
+            for (int j = threadIdx.x;j < rows;j+=blockDim.x) {
+                if (j == rowToReduce) {
+                    continue;
+                }
+                double scalar =  double(M[(j * columns) + i]) / double(M[(rowToReduce * columns) + i]);
+                for (int z = i;z < columns;z++) {
+                    M[(j * columns) + z] -= (scalar * double(M[(rowToReduce * columns) + z]));
+                    I[(j * columns) + z] -= (scalar * double(I[(rowToReduce * columns) + z]));
+                }
+            }
+            
+        }
+        __syncthreads();
+    }
+    
+    /*END OF FIRST PHASE*/
+    
+    
+    //now the matrix should be in reduced form
+        //we will now have the block rearrange rows in the matrix to be in row echelon form
+            //then the final step will be reduced row echelon form
+
+    /*SECOND PHASE*/
+   
+    
+    
+
+    //getting the place we swapped
+    __shared__ int place ;
+    __shared__ int position;
+    if (threadIdx.x == 0) {
+        place = -1;
+    }
+
+    __syncthreads();
+    //now swapping rows to get into row echelon form
+    for (int i = 0;i < columns;i++) {
+        //finding the row with nonzero pivot position
+        for (int z = threadIdx.x;z < rows && z>=position;z += blockDim.x) {
+            //seeing if this row has nonzero pivot position
+                //after reduction, we are guaranteed that only one row or no rows has a nonzero pivot position for i after the position line
+            if (M[(z * columns) + i] != 0) {
+                place = z;
+            }
+        }
+        __syncthreads();
+        //now doing the row swap between the current position row and the place row, if the place row is valid (a pivot row was found)
+        if (place != -1) {
+			for (int z = threadIdx.x;z < columns;z += blockDim.x) {
+				int tmp = M[(place * columns) + z];
+				M[(place * columns) + z] = M[(position * columns) + z];
+				M[(position * columns) + z] = tmp;
+                int identTmp = I[(place * columns) + z];
+				I[(place * columns) + z] = I[(position * columns) + z];
+				I[(position * columns) + z] = identTmp;
+			}
+               
+            __syncthreads();
+
+			//incrementing the position and resetting the place to swap
+            if (threadIdx.x == 0) {
+                position++;
+                place = -1;
+            }
+			__syncthreads();
+        }
+        
+    }
+
+    __syncthreads();
+    
+    /*END OF SECOND PHASE */
+    //now everything is swapped
+     
+    //we will do a parallel divide for each pivot to get every row in the form 1,...,...,...
+
+    /*THIRD PHASE*/
+    
+    for (int i = threadIdx.x;i < rows;i += blockDim.x) {
+        //now we find the first nonzero element in the row
+        for (int j = 0;j < columns;j++) {
+            if (M[(i * columns) + j] != 0) {
+                double toScale = M[(i * columns) + j];
+                //then we go through the rest of the row and reduce
+                for (int z = j ;z < columns;z++) {
+                    M[(i * columns) + z] = double(M[(i*columns)+z])/toScale;
+                    I[(i * columns) + z] = double(I[(i*columns)+z])/toScale;
+                }
+                break;
+            }
+        }
+    }
+
+    __syncthreads();
+
+    //now we should have row echelon form
+    /*END OF THIRD PHASE*/ 
+
+}
+
 //PLU factorization on a given matrix M
     //this will help with solving systems and also very important for our calculation of the determinant (an iterative calculation rather than recursive)
     //idea is just that we copy the reduction kernel, but every operation is repeated on the result matrices
         //numPermutes is the number of permutations done to M, this will help with determinant calculation
+    //M becomes the new U, so then the PLU factorization of old M is now PLM
+    //IT IS IMPORTANT THAT P and L start as IDENTITY MATRICES WITH DIMENSION: ROWS
 template <class T>
-__global__ void PLUFactorization(T* M, T* P, T* L, T* U, unsigned int* numPermutes, unsigned int rows, unsigned int columns) {
+__global__ void PLUFactorization(T* M, T* P, T* L, unsigned int* numPermutes, unsigned int rows, unsigned int columns) {
+   //so we just copy the reduction kernel, keep track of row computations with L, M becomes U in PLU, and any row interchange needed, we perform on P and increment numPermutes 
+    /*FIRST PHASE*/
+    
+    __shared__ int rowToReduce;
+    for (int i = 0;i < columns;i++) {
+        if (threadIdx.x == 0) {
+            //printf("NEW ITER!\n");
+            rowToReduce = -1;
+        }
+        __syncthreads();
+        //finding the row to reduce with this pivot
+        for (int j = threadIdx.x;j < rows;j += blockDim.x) {
+            //going through the row and seeing if all entries are zero up to this point, if so, then this is a possible pivot 
+            if (M[(j * columns) + i] == 0) {
+                continue;
+            }
+            bool satisfied = true;
+            for (int z = 0;z < i;z++) {
+                if (M[(j * columns) + z] != 0) {
+                    satisfied = false;
+                    break;
+                }
+            }
+            if (satisfied) {
+                //then a possible pivot
+                atomicCAS(&rowToReduce,-1, j);
+            }
+        }
 
+        __syncthreads();
+        if (rowToReduce != -1) {
+            //printf("ROW TO REDUCE: %d!\n",rowToReduce);
+            //then we can proceed with reduction between all other rows
+            
+            for (int j = threadIdx.x;j < rows;j+=blockDim.x) {
+                if (j == rowToReduce) {
+                    continue;
+                }
+                double scalar =  double(M[(j * columns) + i]) / double(M[(rowToReduce * columns) + i]);
+                for (int z = i;z < columns;z++) {
+                    M[(j * columns) + z] -= (scalar * double(M[(rowToReduce * columns) + z]));
+                    L[(j * columns) + z] -= (scalar * double(L[(rowToReduce * columns) + z]));
+                }
+            }
+            
+        }
+        __syncthreads();
+    }
+    
+    /*END OF FIRST PHASE*/
+    
+    
+    //now the matrix should be in reduced form
+        //we will now have the block rearrange rows in the matrix to be in row echelon form
+            //then the final step will be reduced row echelon form
+
+    /*SECOND PHASE*/
+   
+    
+    
+
+    //getting the place we swapped
+    __shared__ int place ;
+    __shared__ int position;
+    if (threadIdx.x == 0) {
+        place = -1;
+    }
+
+    __syncthreads();
+    //now swapping rows to get into row echelon form
+    for (int i = 0;i < columns;i++) {
+        //finding the row with nonzero pivot position
+        for (int z = threadIdx.x;z < rows && z>=position;z += blockDim.x) {
+            //seeing if this row has nonzero pivot position
+                //after reduction, we are guaranteed that only one row or no rows has a nonzero pivot position for i after the position line
+            if (M[(z * columns) + i] != 0) {
+                place = z;
+            }
+        }
+        __syncthreads();
+        //now doing the row swap between the current position row and the place row, if the place row is valid (a pivot row was found)
+        if (place != -1) {
+			for (int z = threadIdx.x;z < columns;z += blockDim.x) {
+				int tmp = M[(place * columns) + z];
+				M[(place * columns) + z] = M[(position * columns) + z];
+				M[(position * columns) + z] = tmp;
+                int permuteTmp = P[(place * columns) + z];
+				P[(place * columns) + z] = P[(position * columns) + z];
+				P[(position * columns) + z] = permuteTmp;
+			}
+               
+            __syncthreads();
+
+			//incrementing the position and resetting the place to swap
+            if (threadIdx.x == 0) {
+                position++;
+                place = -1;
+                //incrementing number of row swaps
+                *numPermutes++;
+            }
+			__syncthreads();
+        }
+        
+    }
+
+    __syncthreads();
+    
+    /*END OF SECOND PHASE */
+    //now everything is swapped
+     
+    //we will do a parallel divide for each pivot to get every row in the form 1,...,...,...
+
+    /*THIRD PHASE*/
+    
+    for (int i = threadIdx.x;i < rows;i += blockDim.x) {
+        //now we find the first nonzero element in the row
+        for (int j = 0;j < columns;j++) {
+            if (M[(i * columns) + j] != 0) {
+                double toScale = M[(i * columns) + j];
+                //then we go through the rest of the row and reduce
+                for (int z = j ;z < columns;z++) {
+                    M[(i * columns) + z] = double(M[(i*columns)+z])/toScale;
+                    L[(i * columns) + z] = double(L[(i*columns)+z])/toScale;
+                }
+                break;
+            }
+        }
+    }
+
+    __syncthreads();
+}
+
+//function to get a determinant of a given matrix
+template <class T>
+T getDeterminant(T* M, unsigned int rows, unsigned int columns) {
+    //we first get PLU factorization with the determinant specific kernel, and then we can easily get a determinant (better than recursive approach to determinants)
 }
 
 

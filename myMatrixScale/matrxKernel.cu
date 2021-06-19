@@ -602,21 +602,19 @@ __global__ void PLUFactorization(T* M, T* P, T* L, unsigned int* numPermutes, un
 //calculating a determinant, given U and number of permutes from a PLU factorization
     //IMPORTANT TO NOTE THIS IS ONLY FOR PLU FACTORIZATION ON SQUARE MATRICES, (otherwise determinant is not defined)
 template<class T> 
-__global__ void calculateDeterminant(T* U, int* numPermutes, int* result, unsigned int rows) {
+__global__ void calculateDeterminant(T* U, unsigned int* numPermutes, int* result, unsigned int rows) {
     //if number of permutations is odd, then determinant is affected by factor of -1, 1 otherwise 
         //we can do this at the end to try and avoid initial thread divergence
     __shared__ int multiplierResult[256];
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (threadIdx.x == 0) {
-        multiplierResult = 1;
-    }
+
     //filling into shared memory
     for (int i = tid;i < rows;i+=blockDim.x) {
-        multiplerResult[threadIdx.x] = U[(tid * rows) + tid];
+        multiplierResult[threadIdx.x] = U[(tid * rows) + tid];
     }
     
     __syncthreads();
-    //doing multiplication reduction
+    //doing multiplication reduction on shared memory
 }
 
 //function to get a determinant of a given square matrix
@@ -625,8 +623,8 @@ T getDeterminant(T* M, unsigned int rows) {
     //we first get PLU factorization with the determinant specific kernel, and then we can easily get a determinant (better than recursive approach to determinants)
     int* deviceL;
     int* deviceP;
-    int* deviceM
-    int* numPermutes;
+    int* deviceM;
+    unsigned int* numPermutes;
     int* result;
     int* deviceRows;
     int dummy = 0;
@@ -639,13 +637,13 @@ T getDeterminant(T* M, unsigned int rows) {
     cudaMalloc(&result, sizeof(T));
     cudaMemcpy(numPermutes, &dummy, sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(deviceRows, &rows, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(deviceM, M, sizeof(int)* rows * rows, cudaMemcpyHostToDevice)
+    cudaMemcpy(deviceM, M, sizeof(int) * rows * rows, cudaMemcpyHostToDevice);
     //generating identities needed
     generateIdentity << <1, 256 >> > (deviceL, rows);
     generateIdentity << <1, 256 >> > (deviceP, rows);
    
     //running plu factorization
-    PLUFactorization << <1, 256 >> > (deviceM, deviceP, deviceL, numPermutes, deviceRows,deviceRows);
+    PLUFactorization << <1, 256 >> > (deviceM, deviceP, deviceL, numPermutes, rows,rows);
     // getting the determinant
     calculateDeterminant << <1, 256 >> > (deviceM, numPermutes, result, rows);
     T hostResult;
@@ -818,7 +816,7 @@ int main()
     }*/
 
     /*TEST FOR REDUCED ECHELON FORM REDUCTION*/
-    
+    /*
     int firstMatrix[] ={0, −3, −6, 4, 9, −1, −2, −1, 3, 1, −2, −3, 0, 3, −1, 1, 4, 5, −9, −7};
     //cuda copying
     int* firstMatrixDevice;
@@ -841,7 +839,7 @@ int main()
             printf("%d, ", hostResult[(i * 5) + j]);
         }
         printf("\n");
-    } 
+    } */
 
     return 0;
 }
